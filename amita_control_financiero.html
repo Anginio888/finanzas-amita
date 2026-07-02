@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AMITA · Control Financiero</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --tinto:#6B2737; --tinto-d:#4F1C29;
+    --cafe:#4A3728; --cafe-d:#33251A;
+    --beige:#EDD5A3; --beige-d:#E0C280;
+    --fondo:#FAF5ED;
+  }
+  *{-webkit-tap-highlight-color:transparent; box-sizing:border-box;}
+  body{font-family:'Jost',sans-serif; background:var(--fondo); padding-bottom:env(safe-area-inset-bottom);}
+  .font-title{font-family:'Cinzel',serif;}
+  .safe-top{padding-top:env(safe-area-inset-top);}
+  .tab-active{color:var(--tinto);}
+  .tab-inactive{color:#9B8B7A;}
+  .card{background:#fff; border:1px solid #EADFC8; border-radius:18px;}
+  .btn-tinto{background:var(--tinto); color:#fff;}
+  .btn-tinto:active{background:var(--tinto-d);}
+  .btn-beige{background:var(--beige); color:var(--cafe-d);}
+  .btn-beige:active{background:var(--beige-d);}
+  input,select,textarea{font-family:'Jost',sans-serif;}
+  ::-webkit-scrollbar{display:none;}
+  .modal-bg{background:rgba(51,37,26,.55);}
+  .thumb{width:36px;height:36px;border-radius:10px;object-fit:cover;border:1px solid var(--beige-d);}
+</style>
+</head>
+<body class="min-h-screen safe-top">
+
+<!-- ===== PANTALLA DE BLOQUEO ===== -->
+<div id="lockScreen" class="fixed inset-0 z-[100] flex flex-col items-center justify-center px-6" style="background:var(--fondo)">
+  <div class="text-4xl mb-3">🔐</div>
+  <p class="font-title text-2xl mb-1" style="color:var(--tinto)">AMITA</p>
+  <p class="text-xs mb-8 uppercase tracking-widest" style="color:var(--cafe)">Control Financiero</p>
+  <input id="lockInput" type="password" inputmode="numeric" placeholder="Contraseña"
+    class="w-full max-w-xs card px-4 py-3 text-center text-lg tracking-widest mb-3 outline-none"
+    style="border-color:var(--beige-d)" onkeydown="if(event.key==='Enter') intentarDesbloquear()">
+  <button onclick="intentarDesbloquear()" class="w-full max-w-xs btn-tinto rounded-2xl py-3 font-semibold">Entrar</button>
+  <p id="lockError" class="text-xs mt-3 hidden" style="color:#B23A3A">Contraseña incorrecta</p>
+</div>
+
+<!-- ===== APP ===== -->
+<div id="appRoot" class="hidden">
+  <div class="px-5 pt-4 pb-3 flex items-center justify-between">
+    <div>
+      <h1 class="font-title text-xl" style="color:var(--tinto)">AMITA</h1>
+      <p class="text-[11px] tracking-widest uppercase" style="color:var(--cafe)">Control Financiero</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <button onclick="abrirModalSaldos()" class="text-lg" title="Ajustar saldos iniciales">⚙️</button>
+      <button onclick="bloquearApp()" class="text-[11px] underline" style="color:var(--tinto)">Bloquear</button>
+    </div>
+  </div>
+
+  <div id="app" class="px-4 pb-28"></div>
+
+  <div id="toast" class="fixed left-4 right-4 bottom-24 z-50 hidden">
+    <div class="card px-4 py-3 shadow-lg text-sm font-medium text-center" style="border-color:var(--beige-d); color:var(--cafe-d)" id="toastMsg"></div>
+  </div>
+
+  <div id="modalRoot"></div>
+
+  <div class="fixed bottom-0 left-0 right-0 bg-white border-t z-40" style="border-color:#EADFC8; padding-bottom:env(safe-area-inset-bottom)">
+    <div class="grid grid-cols-4">
+      <button onclick="setTab('inicio')" id="nav-inicio" class="py-3 flex flex-col items-center gap-1 tab-active">
+        <span class="text-xl">🏛️</span><span class="text-[10px] font-medium">Inicio</span>
+      </button>
+      <button onclick="setTab('movimiento')" id="nav-movimiento" class="py-3 flex flex-col items-center gap-1 tab-inactive">
+        <span class="text-xl">➕</span><span class="text-[10px] font-medium">Movimiento</span>
+      </button>
+      <button onclick="setTab('traspaso')" id="nav-traspaso" class="py-3 flex flex-col items-center gap-1 tab-inactive">
+        <span class="text-xl">🔄</span><span class="text-[10px] font-medium">Traspaso</span>
+      </button>
+      <button onclick="setTab('informe')" id="nav-informe" class="py-3 flex flex-col items-center gap-1 tab-inactive">
+        <span class="text-xl">📊</span><span class="text-[10px] font-medium">Informe</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   CONTRASEÑA DE ACCESO
+   Para cambiarla, edita el valor entre comillas abajo:
+============================================================ */
+const APP_PASSWORD = '1234';
+
+/* ===== PERSISTENCIA ===== */
+const LS = { base:'amita_saldos_base', movs:'amita_movimientos' };
+
+function loadLS(key, fallback){
+  try{
+    const raw = localStorage.getItem(key);
+    return raw !== null ? JSON.parse(raw) : fallback;
+  }catch(e){ return fallback; }
+}
+function saveLS(){
+  try{
+    localStorage.setItem(LS.base, JSON.stringify(state.saldosBase));
+    localStorage.setItem(LS.movs, JSON.stringify(state.movimientos));
+  }catch(e){ toast('No se pudo guardar en este dispositivo'); }
+}
+
+/* ===== ESTADO =====
+   Los saldos iniciales arrancan en $0.00. Solo se modifican
+   desde el botón ⚙️ (Ajustar Saldos Iniciales) o al registrar
+   movimientos reales. Nunca se sobreescriben con datos de ejemplo. */
+let state = {
+  saldosBase: loadLS(LS.base, { bbva:0, mp:0, efectivo:0, cajaFuerte:0 }),
+  movimientos: loadLS(LS.movs, []), // {id, tipo:'ingreso'|'egreso'|'traspaso', cuenta, cuentaDestino, monto, concepto, fecha:'YYYY-MM-DD', recibo:dataURL|null}
+  filtroMes: new Date().toISOString().slice(0,7)
+};
+let tab = 'inicio';
+let chartInstance = null;
+let modalRecibo = null;      // dataURL temporal mientras se edita el modal de movimiento
+let idPendienteEliminar = null; // id en confirmación de borrado dentro del modal
+
+const CUENTAS = [
+  {key:'bbva', label:'BBVA', bg:'var(--beige)', txt:'var(--cafe-d)'},
+  {key:'mp', label:'Mercado Pago', bg:'#EAD9F0', txt:'var(--cafe-d)'},
+  {key:'efectivo', label:'Caja Chica', bg:'var(--fondo)', txt:'var(--cafe-d)', border:true},
+  {key:'cajaFuerte', label:'Caja Fuerte', bg:'var(--cafe)', txt:'#fff'},
+];
+
+/* ===== LOGIN ===== */
+function intentarDesbloquear(){
+  const val = document.getElementById('lockInput').value;
+  if(val === APP_PASSWORD){
+    document.getElementById('lockScreen').classList.add('hidden');
+    document.getElementById('appRoot').classList.remove('hidden');
+    document.getElementById('lockError').classList.add('hidden');
+    render();
+  } else {
+    document.getElementById('lockError').classList.remove('hidden');
+  }
+}
+function bloquearApp(){
+  document.getElementById('appRoot').classList.add('hidden');
+  document.getElementById('lockScreen').classList.remove('hidden');
+  document.getElementById('lockInput').value = '';
+}
+
+/* ===== HELPERS ===== */
+const fmt = n => '$' + Number(n||0).toLocaleString('es-MX', {minimumFractionDigits:2, maximumFractionDigits:2});
+const hoyISO = () => new Date().toISOString().slice(0,10);
+function cuentaLabel(key){ const c = CUENTAS.find(x=>x.key===key); return c ? c.label : key; }
+
+function toast(msg){
+  const t = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent = msg;
+  t.classList.remove('hidden');
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(()=> t.classList.add('hidden'), 1800);
+}
+
+function setTab(t){
+  tab = t;
+  ['inicio','movimiento','traspaso','informe'].forEach(k=>{
+    const el = document.getElementById('nav-'+k);
+    el.className = 'py-3 flex flex-col items-center gap-1 ' + (k===t?'tab-active':'tab-inactive');
+  });
+  render();
+}
+
+/* ===== SALDOS CALCULADOS DESDE EL HISTORIAL ===== */
+function computeSaldos(){
+  const s = { ...state.saldosBase };
+  const ordenados = [...state.movimientos].sort((a,b)=> a.fecha.localeCompare(b.fecha) || a.id-b.id);
+  ordenados.forEach(m=>{
+    if(m.tipo==='ingreso') s[m.cuenta] += m.monto;
+    else if(m.tipo==='egreso') s[m.cuenta] -= m.monto;
+    else if(m.tipo==='traspaso'){ s[m.cuenta] -= m.monto; s[m.cuentaDestino] += m.monto; }
+  });
+  return s;
+}
+
+/* ===== FILTRO POR MES ===== */
+function cambiarFiltroMes(val){
+  state.filtroMes = val;
+  render();
+}
+function movimientosDelMes(tipos){
+  return state.movimientos
+    .filter(m => m.fecha.startsWith(state.filtroMes) && tipos.includes(m.tipo))
+    .sort((a,b)=> b.fecha.localeCompare(a.fecha) || b.id-a.id);
+}
+
+/* ===== MODAL: AJUSTAR SALDOS INICIALES ===== */
+function abrirModalSaldos(){
+  const b = state.saldosBase;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="fixed inset-0 modal-bg z-50 flex items-end" onclick="if(event.target===this) cerrarModal()">
+    <div class="w-full bg-white rounded-t-3xl p-5 max-h-[88vh] overflow-y-auto" style="padding-bottom:calc(env(safe-area-inset-bottom) + 20px)">
+      <div class="w-10 h-1.5 rounded-full mx-auto mb-4" style="background:var(--beige-d)"></div>
+      <p class="font-title text-lg mb-1" style="color:var(--tinto)">⚙️ Ajustar saldos iniciales</p>
+      <p class="text-xs mb-4" style="color:#9B8B7A">Define con cuánto dinero arranca cada cuenta. Esto no borra tu historial de movimientos.</p>
+      ${CUENTAS.map(c=>`
+        <label class="text-[11px] uppercase tracking-widest" style="color:var(--cafe)">${c.label}</label>
+        <input id="sb_${c.key}" type="number" inputmode="decimal" value="${b[c.key]}"
+          class="w-full mb-2 px-3 py-2.5 rounded-xl border text-sm outline-none" style="border-color:var(--beige-d)">
+      `).join('')}
+      <button onclick="guardarSaldosIniciales()" class="w-full btn-tinto rounded-xl py-3 font-semibold text-sm mt-2">Guardar saldos iniciales</button>
+      <button onclick="cerrarModal()" class="w-full py-2 mt-2 text-xs underline" style="color:#9B8B7A">Cancelar</button>
+    </div>
+  </div>`;
+}
+function guardarSaldosIniciales(){
+  const nuevo = {};
+  for(const c of CUENTAS){
+    const val = parseFloat(document.getElementById('sb_'+c.key).value);
+    nuevo[c.key] = isNaN(val) ? 0 : val;
+  }
+  state.saldosBase = nuevo;
+  saveLS();
+  cerrarModal();
+  toast('Saldos iniciales actualizados');
+  render();
+}
+
+/* ===== MODAL: NUEVO / EDITAR MOVIMIENTO ===== */
+function abrirModal(tipoDefault, idEditar){
+  const editando = idEditar ? state.movimientos.find(m=>m.id===idEditar) : null;
+  modalRecibo = editando ? (editando.recibo || null) : null;
+  idPendienteEliminar = null;
+
+  const tipo = editando ? editando.tipo : tipoDefault;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="fixed inset-0 modal-bg z-50 flex items-end" onclick="if(event.target===this) cerrarModal()">
+    <div class="w-full bg-white rounded-t-3xl p-5 max-h-[88vh] overflow-y-auto" style="padding-bottom:calc(env(safe-area-inset-bottom) + 20px)">
+      <div class="w-10 h-1.5 rounded-full mx-auto mb-4" style="background:var(--beige-d)"></div>
+      <p class="font-title text-lg mb-4" style="color:var(--tinto)">${editando ? 'Editar movimiento' : 'Nuevo movimiento'}</p>
+
+      <label class="text-[11px] uppercase tracking-widest" style="color:var(--cafe)">Tipo</label>
+      <select id="mTipo" onchange="toggleCuentaDestino()" class="w-full mb-2 px-3 py-2.5 rounded-xl border text-sm outline-none" style="border-color:var(--beige-d)">
+        <option value="ingreso" ${tipo==='ingreso'?'selected':''}>Ingreso (+)</option>
+        <option value="egreso" ${tipo==='egreso'?'selected':''}>Egreso (−)</option>
+        <option value="traspaso" ${tipo==='traspaso'?'selected':''}>Traspaso ⇄</option>
+      </select>
+
+      <label class="text-[11px] uppercase tracking-widest" id="lblCuenta" style="color:var(--cafe)">${tipo==='traspaso'?'Desde':'Cuenta'}</label>
+      <select id="mCuenta" class="w-full mb-2 px-3 py-2.5 rounded-xl border text-sm outline-none" style="border-color:var(--beige-d)">
+        ${CUENTAS.map(c=>`<option value="${c.key}" ${editando && editando.cuenta===c.key?'selected':''}>${c.label}</option>`).join('')}
+      </select>
+
+      <div id="divCuentaDestino" class="${tipo==='traspaso'?'':'hidden'}">
+        <label class="text-[11px] uppercase tracking-widest" style="color:var(--cafe)">Hacia</label>
+        <select id="mCuentaDestino" class="w-full mb-2 px-3 py-2.5 rounded-xl border text-sm outline-none" style="border-color:var(--beige-d)">
+          ${CUENTAS.map((c,i)=>`<option value="${c.key}" ${editando ? (editando.cuentaDestino===c.key?'selected':'') : (i===1?'selected':'')}>${c.label}</option>`).join('')}
+        </select>
+      </div>
+
+      <label class="text-[11px] uppercase tracking-widest" style="color:var(--cafe)">Monto</label>
+      <input id="mMonto" type="number" inputmode="decimal" placeholder="0.00" value="${editando ? editando.monto : ''}"
+        class="w-full mb-2 px-3 py-2.5 rounded-xl border text-sm outline-none" style="border-color:var(--beige-d)">
+
+      <label class="text-[11px] uppercase tracking-widest" style="color:var(--cafe)">Fecha</label>
+      <input id="mFecha" type="date" value="${editando ? editando.fecha : hoyISO()}"
+        class="w-full mb-2 px-3 py-2.5 rounded-xl border text-sm outline-none" style="border-color:var(--beige-d)">
+
+      <label class="text-[11px] uppercase tracking-widest" style="color:var(--cafe)">Concepto</label>
+      <input id="mConcepto" type="text" placeholder="Ej. Venta, pago de luz..." value="${editando ? editando.concepto : ''}"
+        class="w-full mb-3 px-3 py-2.5 rounded-xl border text-sm outline-none" style="border-color:var(--beige-d)">
+
+      <label class="text-[11px] uppercase tracking-widest block mb-1" style="color:var(--cafe)">Recibo (imagen)</label>
+      <div class="flex items-center gap-2 mb-4">
+        <input id="mRecibo" type="file" accept="image/*" onchange="onReciboSeleccionado(event)" class="text-xs flex-1">
+        <img id="mReciboPreview" src="${modalRecibo||''}" class="thumb ${modalRecibo?'':'hidden'}">
+      </div>
+
+      <div id="accionesModal">${accionesModalHTML(editando)}</div>
+      <button onclick="cerrarModal()" class="w-full py-2 mt-2 text-xs underline" style="color:#9B8B7A">Cancelar</button>
+    </div>
+  </div>`;
+}
+
+function accionesModalHTML(editando){
+  if(!editando) return `<button onclick="guardarModal(null)" class="w-full btn-tinto rounded-xl py-3 font-semibold text-sm">Guardar</button>`;
+
+  if(idPendienteEliminar === editando.id){
+    return `
+      <p class="text-xs text-center mb-2" style="color:#B23A3A">¿Eliminar este movimiento? No se puede deshacer.</p>
+      <div class="flex gap-2">
+        <button onclick="cancelarEliminar(${editando.id})" class="flex-1 rounded-xl py-3 font-semibold text-sm btn-beige">Cancelar</button>
+        <button onclick="confirmarEliminar(${editando.id})" class="flex-1 rounded-xl py-3 font-semibold text-sm" style="background:#B23A3A; color:#fff">Sí, eliminar</button>
+      </div>`;
+  }
+  return `
+    <div class="flex gap-2">
+      <button onclick="pedirConfirmacionEliminar(${editando.id})" class="px-4 rounded-xl font-semibold text-sm" style="background:#F5E4E4; color:#B23A3A">🗑</button>
+      <button onclick="guardarModal(${editando.id})" class="flex-1 btn-tinto rounded-xl py-3 font-semibold text-sm">Guardar</button>
+    </div>`;
+}
+
+function pedirConfirmacionEliminar(id){
+  idPendienteEliminar = id;
+  document.getElementById('accionesModal').innerHTML = accionesModalHTML({id});
+}
+function cancelarEliminar(id){
+  idPendienteEliminar = null;
+  const m = state.movimientos.find(x=>x.id===id);
+  document.getElementById('accionesModal').innerHTML = accionesModalHTML(m);
+}
+function confirmarEliminar(id){
+  state.movimientos = state.movimientos.filter(m => m.id !== id);
+  saveLS();
+  idPendienteEliminar = null;
+  cerrarModal();
+  toast('Movimiento eliminado');
+  render();
+}
+
+function toggleCuentaDestino(){
+  const tipo = document.getElementById('mTipo').value;
+  document.getElementById('divCuentaDestino').classList.toggle('hidden', tipo!=='traspaso');
+  document.getElementById('lblCuenta').textContent = tipo==='traspaso' ? 'Desde' : 'Cuenta';
+}
+
+function onReciboSeleccionado(ev){
+  const file = ev.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    modalRecibo = e.target.result;
+    const img = document.getElementById('mReciboPreview');
+    img.src = modalRecibo;
+    img.classList.remove('hidden');
+  };
+  reader.readAsDataURL(file);
+}
+
+function cerrarModal(){
+  modalRecibo = null;
+  idPendienteEliminar = null;
+  document.getElementById('modalRoot').innerHTML = '';
+}
+
+function guardarModal(idEditar){
+  const tipo = document.getElementById('mTipo').value;
+  const cuenta = document.getElementById('mCuenta').value;
+  const cuentaDestino = tipo==='traspaso' ? document.getElementById('mCuentaDestino').value : null;
+  const monto = parseFloat(document.getElementById('mMonto').value);
+  const fecha = document.getElementById('mFecha').value;
+  const concepto = document.getElementById('mConcepto').value.trim();
+
+  if(isNaN(monto) || monto <= 0){ toast('Ingresa un monto válido'); return; }
+  if(!fecha){ toast('Elige una fecha'); return; }
+  if(!concepto){ toast('Escribe un concepto'); return; }
+  if(tipo==='traspaso' && cuenta===cuentaDestino){ toast('Elige cuentas distintas'); return; }
+
+  const data = { tipo, cuenta, cuentaDestino, monto, fecha, concepto, recibo: modalRecibo };
+
+  if(idEditar){
+    const idx = state.movimientos.findIndex(m=>m.id===idEditar);
+    state.movimientos[idx] = { ...state.movimientos[idx], ...data };
+    toast('Movimiento actualizado');
+  } else {
+    state.movimientos.push({ id: Date.now(), ...data });
+    toast('Movimiento registrado');
+  }
+
+  saveLS();
+  cerrarModal();
+  render();
+}
+
+/* ===== GRÁFICA DE DONA ===== */
+function renderChart(){
+  const canvas = document.getElementById('chartCuentas');
+  if(!canvas) return;
+  const saldos = computeSaldos();
+  if(chartInstance) chartInstance.destroy();
+  chartInstance = new Chart(canvas, {
+    type: 'doughnut',
+    data: {
+      labels: CUENTAS.map(c=>c.label),
+      datasets: [{
+        data: CUENTAS.map(c=>Math.max(saldos[c.key],0)),
+        backgroundColor: ['#E0C280', '#C9A6D6', '#EDD5A3', '#4A3728'],
+        borderColor: '#FAF5ED',
+        borderWidth: 3
+      }]
+    },
+    options: {
+      cutout: '65%',
+      plugins: { legend: { position:'bottom', labels:{ boxWidth:10, font:{ family:'Jost', size:11 }, color:'#4A3728' } } }
+    }
+  });
+}
+
+/* ===== VISTAS ===== */
+function tarjetasCuentas(saldos){
+  return `
+  <div class="grid grid-cols-2 gap-3 mb-2">
+    ${CUENTAS.map(c=>`
+      <div class="card p-4" style="background:${c.bg}; ${c.border?'border-color:var(--beige-d)':'border:none'}">
+        <p class="text-[11px] uppercase tracking-widest" style="color:${c.txt}">${c.label}</p>
+        <p class="font-title text-lg mt-1" style="color:${c.txt}">${fmt(saldos[c.key])}</p>
+      </div>
+    `).join('')}
+  </div>
+  <button onclick="abrirModalSaldos()" class="text-[11px] underline mb-5" style="color:var(--tinto)">⚙️ Ajustar saldos iniciales</button>`;
+}
+
+function filaMovimiento(m){
+  const signo = m.tipo==='ingreso' ? '+' : m.tipo==='egreso' ? '−' : '↔';
+  const color = m.tipo==='ingreso' ? '#3F7A4E' : m.tipo==='egreso' ? '#B23A3A' : 'var(--tinto)';
+  const sub = m.tipo==='traspaso' ? (cuentaLabel(m.cuenta)+' → '+cuentaLabel(m.cuentaDestino)) : cuentaLabel(m.cuenta);
+  return `
+    <div onclick="abrirModal('${m.tipo}', ${m.id})" class="flex items-center justify-between text-xs px-3 py-2 card active:scale-[0.98] transition">
+      <div class="flex items-center gap-2 text-left">
+        ${m.recibo ? `<img src="${m.recibo}" class="thumb">` : ''}
+        <div>
+          <p style="color:var(--cafe-d)">${m.concepto}</p>
+          <p class="text-[10px]" style="color:#9B8B7A">${m.fecha} · ${sub}</p>
+        </div>
+      </div>
+      <span class="font-semibold" style="color:${color}">${signo} ${fmt(m.monto)}</span>
+    </div>`;
+}
+
+function selectorMes(){
+  return `
+  <div class="card px-4 py-2.5 mb-4 flex items-center justify-between">
+    <span class="text-[11px] uppercase tracking-widest" style="color:var(--cafe)">📅 Período</span>
+    <input type="month" value="${state.filtroMes}" onchange="cambiarFiltroMes(this.value)"
+      class="text-sm outline-none bg-transparent" style="color:var(--tinto)">
+  </div>`;
+}
+
+function viewInicio(){
+  const saldos = computeSaldos();
+  setTimeout(renderChart, 0);
+  const total = CUENTAS.reduce((s,c)=>s+saldos[c.key],0);
+  const recientes = [...state.movimientos].sort((a,b)=> b.fecha.localeCompare(a.fecha) || b.id-a.id).slice(0,6);
+  return `
+  ${tarjetasCuentas(saldos)}
+  <div class="card p-4 mb-5" style="background:var(--tinto); border:none;">
+    <p class="text-[11px] text-white/70 uppercase tracking-widest">Total consolidado</p>
+    <p class="font-title text-2xl text-white">${fmt(total)}</p>
+  </div>
+  <p class="text-xs uppercase tracking-widest mb-2" style="color:var(--cafe)">Distribución de tu dinero</p>
+  <div class="card p-4 mb-6"><canvas id="chartCuentas" height="220"></canvas></div>
+  <p class="text-xs uppercase tracking-widest mb-2" style="color:var(--cafe)">Movimientos recientes</p>
+  <div class="space-y-1.5">
+    ${recientes.length===0 ? `<p class="text-xs text-center py-4" style="color:#B0A18E">Sin movimientos aún</p>` : recientes.map(filaMovimiento).join('')}
+  </div>`;
+}
+
+function viewMovimiento(){
+  const saldos = computeSaldos();
+  const lista = movimientosDelMes(['ingreso','egreso']);
+  const ingresos = lista.filter(m=>m.tipo==='ingreso').reduce((s,m)=>s+m.monto,0);
+  const egresos = lista.filter(m=>m.tipo==='egreso').reduce((s,m)=>s+m.monto,0);
+  return `
+  ${tarjetasCuentas(saldos)}
+  <div class="grid grid-cols-2 gap-2 mb-4">
+    <button onclick="abrirModal('ingreso')" class="rounded-xl py-3 font-semibold text-sm" style="background:#3F7A4E; color:#fff">+ Ingreso</button>
+    <button onclick="abrirModal('egreso')" class="rounded-xl py-3 font-semibold text-sm" style="background:#B23A3A; color:#fff">− Egreso</button>
+  </div>
+  ${selectorMes()}
+  <div class="flex items-center justify-between mb-2">
+    <p class="text-xs uppercase tracking-widest" style="color:var(--cafe)">Movimientos del mes</p>
+    <span class="text-[10px] px-2 py-1 rounded-full font-semibold" style="background:var(--beige); color:var(--cafe-d)">+${fmt(ingresos)} / −${fmt(egresos)}</span>
+  </div>
+  <div class="space-y-1.5">
+    ${lista.length===0 ? `<p class="text-xs text-center py-4" style="color:#B0A18E">Sin movimientos este mes</p>` : lista.map(filaMovimiento).join('')}
+  </div>`;
+}
+
+function viewTraspaso(){
+  const saldos = computeSaldos();
+  const lista = movimientosDelMes(['traspaso']);
+  return `
+  ${tarjetasCuentas(saldos)}
+  <button onclick="abrirModal('traspaso')" class="w-full btn-tinto rounded-xl py-3 font-semibold text-sm mb-4">🔄 Nuevo traspaso</button>
+  ${selectorMes()}
+  <p class="text-xs uppercase tracking-widest mb-2" style="color:var(--cafe)">Traspasos del mes</p>
+  <div class="space-y-1.5">
+    ${lista.length===0 ? `<p class="text-xs text-center py-4" style="color:#B0A18E">Sin traspasos este mes</p>` : lista.map(filaMovimiento).join('')}
+  </div>`;
+}
+
+function viewInforme(){
+  const saldos = computeSaldos();
+  const hoy = hoyISO();
+  const movsHoy = state.movimientos.filter(m => m.fecha === hoy && m.tipo !== 'traspaso');
+  const ingresos = movsHoy.filter(m=>m.tipo==='ingreso').reduce((s,m)=>s+m.monto,0);
+  const egresos = movsHoy.filter(m=>m.tipo==='egreso').reduce((s,m)=>s+m.monto,0);
+  const neto = ingresos - egresos;
+  setTimeout(renderChart, 0);
+  return `
+  <p class="text-xs uppercase tracking-widest mb-2" style="color:var(--cafe)">Cierre / Informe diario</p>
+  <div class="card p-4 mb-3" style="background:var(--tinto); border:none;">
+    <p class="text-[11px] text-white/70 uppercase tracking-widest">${new Date().toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'})}</p>
+    <p class="font-title text-2xl text-white">${fmt(neto)} <span class="text-xs font-normal">neto</span></p>
+  </div>
+  <div class="grid grid-cols-2 gap-3 mb-6">
+    <div class="card p-4 text-center" style="background:#E7F0E9">
+      <p class="text-[11px] uppercase tracking-widest" style="color:#3F7A4E">Ingresado hoy</p>
+      <p class="font-title text-lg mt-1" style="color:#3F7A4E">${fmt(ingresos)}</p>
+    </div>
+    <div class="card p-4 text-center" style="background:#F5E4E4">
+      <p class="text-[11px] uppercase tracking-widest" style="color:#B23A3A">Gastado hoy</p>
+      <p class="font-title text-lg mt-1" style="color:#B23A3A">${fmt(egresos)}</p>
+    </div>
+  </div>
+  <p class="text-xs uppercase tracking-widest mb-2" style="color:var(--cafe)">Distribución total de cuentas</p>
+  <div class="card p-4 mb-6"><canvas id="chartCuentas" height="220"></canvas></div>
+  <p class="text-xs uppercase tracking-widest mb-2" style="color:var(--cafe)">Detalle de hoy (${movsHoy.length})</p>
+  <div class="space-y-1.5">
+    ${movsHoy.length===0 ? `<p class="text-xs text-center py-4" style="color:#B0A18E">Sin movimientos hoy</p>` : movsHoy.map(filaMovimiento).join('')}
+  </div>`;
+}
+
+/* ===== RENDER PRINCIPAL ===== */
+function render(){
+  const app = document.getElementById('app');
+  if(tab==='inicio') app.innerHTML = viewInicio();
+  else if(tab==='movimiento') app.innerHTML = viewMovimiento();
+  else if(tab==='traspaso') app.innerHTML = viewTraspaso();
+  else app.innerHTML = viewInforme();
+}
+</script>
+</body>
+</html>
